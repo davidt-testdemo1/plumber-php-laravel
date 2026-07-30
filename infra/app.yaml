@@ -1,0 +1,504 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Container service (Tudovu). ECS Fargate behind an internet-facing
+  Application Load Balancer (HTTP). Image from ECR. No custom domain — served on
+  the ALB DNS name. Add a domain via the Website path for HTTPS + Route53.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to run the service + load balancer in.
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Two or more public subnets for the ALB and Fargate tasks.
+  ImageUri:
+    Type: String
+    Description: ECR image URI the CI/CD workflow pushes.
+  DesiredCount:
+    Type: Number
+    Default: 2
+  EnvAppName:
+    Type: String
+    Default: ""
+    Description: APP_NAME for the app container.
+  EnvAppEnv:
+    Type: String
+    Default: ""
+    Description: APP_ENV for the app container.
+  EnvAppDebug:
+    Type: String
+    Default: ""
+    Description: APP_DEBUG for the app container.
+  EnvAppUrl:
+    Type: String
+    Default: ""
+    Description: APP_URL for the app container.
+  EnvAppLocale:
+    Type: String
+    Default: ""
+    Description: APP_LOCALE for the app container.
+  EnvAppFallbackLocale:
+    Type: String
+    Default: ""
+    Description: APP_FALLBACK_LOCALE for the app container.
+  EnvAppFakerLocale:
+    Type: String
+    Default: ""
+    Description: APP_FAKER_LOCALE for the app container.
+  EnvAppMaintenanceDriver:
+    Type: String
+    Default: ""
+    Description: APP_MAINTENANCE_DRIVER for the app container.
+  EnvBcryptRounds:
+    Type: String
+    Default: ""
+    Description: BCRYPT_ROUNDS for the app container.
+  EnvLogChannel:
+    Type: String
+    Default: ""
+    Description: LOG_CHANNEL for the app container.
+  EnvLogLevel:
+    Type: String
+    Default: ""
+    Description: LOG_LEVEL for the app container.
+  EnvDbConnection:
+    Type: String
+    Default: ""
+    Description: DB_CONNECTION for the app container.
+  EnvDbHost:
+    Type: String
+    Default: ""
+    Description: DB_HOST for the app container.
+  EnvDbPort:
+    Type: String
+    Default: ""
+    Description: DB_PORT for the app container.
+  EnvDbDatabase:
+    Type: String
+    Default: ""
+    Description: DB_DATABASE for the app container.
+  EnvSessionDriver:
+    Type: String
+    Default: ""
+    Description: SESSION_DRIVER for the app container.
+  EnvSessionLifetime:
+    Type: String
+    Default: ""
+    Description: SESSION_LIFETIME for the app container.
+  EnvSessionEncrypt:
+    Type: String
+    Default: ""
+    Description: SESSION_ENCRYPT for the app container.
+  EnvBroadcastConnection:
+    Type: String
+    Default: ""
+    Description: BROADCAST_CONNECTION for the app container.
+  EnvFilesystemDisk:
+    Type: String
+    Default: ""
+    Description: FILESYSTEM_DISK for the app container.
+  EnvQueueConnection:
+    Type: String
+    Default: ""
+    Description: QUEUE_CONNECTION for the app container.
+  EnvCacheStore:
+    Type: String
+    Default: ""
+    Description: CACHE_STORE for the app container.
+  EnvMemcachedHost:
+    Type: String
+    Default: ""
+    Description: MEMCACHED_HOST for the app container.
+  EnvRedisClient:
+    Type: String
+    Default: ""
+    Description: REDIS_CLIENT for the app container.
+  EnvRedisHost:
+    Type: String
+    Default: ""
+    Description: REDIS_HOST for the app container.
+  EnvRedisPort:
+    Type: String
+    Default: ""
+    Description: REDIS_PORT for the app container.
+  EnvMailMailer:
+    Type: String
+    Default: ""
+    Description: MAIL_MAILER for the app container.
+  EnvMailHost:
+    Type: String
+    Default: ""
+    Description: MAIL_HOST for the app container.
+  EnvMailPort:
+    Type: String
+    Default: ""
+    Description: MAIL_PORT for the app container.
+  EnvMailFromAddress:
+    Type: String
+    Default: ""
+    Description: MAIL_FROM_ADDRESS for the app container.
+  EnvAwsDefaultRegion:
+    Type: String
+    Default: ""
+    Description: AWS_DEFAULT_REGION for the app container.
+  EnvAwsBucket:
+    Type: String
+    Default: ""
+    Description: AWS_BUCKET for the app container.
+
+Resources:
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB ingress (HTTP 80) from the internet.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Tasks accept traffic only from the ALB.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Port: 3000
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+      Matcher:
+        HttpCode: 200-399
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}"
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/tudovu/${AWS::StackName}"
+      RetentionInDays: 30
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      PermissionsBoundary: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/TudovuArchitectBoundary'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+      Policies:
+        - PolicyName: read-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref SecretAppKey
+                  - !Ref SecretDbUsername
+                  - !Ref SecretDbPassword
+                  - !Ref SecretRedisPassword
+                  - !Ref SecretMailUsername
+                  - !Ref SecretMailPassword
+                  - !Ref SecretAwsAccessKeyId
+                  - !Ref SecretAwsSecretAccessKey
+
+  SecretAppKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "APP_KEY for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  SecretDbUsername:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "DB_USERNAME for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  SecretDbPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "DB_PASSWORD for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  SecretRedisPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "REDIS_PASSWORD for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  SecretMailUsername:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "MAIL_USERNAME for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  SecretMailPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "MAIL_PASSWORD for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  SecretAwsAccessKeyId:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "AWS_ACCESS_KEY_ID for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  SecretAwsSecretAccessKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "AWS_SECRET_ACCESS_KEY for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      PermissionsBoundary: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/TudovuArchitectBoundary'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: app-bucket-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt AppBucket.Arn
+                  - !Sub "${AppBucket.Arn}/*"
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !Ref TaskExecutionRole
+      TaskRoleArn: !Ref TaskRole
+      ContainerDefinitions:
+        - Name: app
+          Image: !Ref ImageUri
+          PortMappings:
+            - ContainerPort: 3000
+          Essential: true
+          Environment:
+            - Name: APP_NAME
+              Value: !Ref EnvAppName
+            - Name: APP_ENV
+              Value: !Ref EnvAppEnv
+            - Name: APP_DEBUG
+              Value: !Ref EnvAppDebug
+            - Name: APP_URL
+              Value: !Ref EnvAppUrl
+            - Name: APP_LOCALE
+              Value: !Ref EnvAppLocale
+            - Name: APP_FALLBACK_LOCALE
+              Value: !Ref EnvAppFallbackLocale
+            - Name: APP_FAKER_LOCALE
+              Value: !Ref EnvAppFakerLocale
+            - Name: APP_MAINTENANCE_DRIVER
+              Value: !Ref EnvAppMaintenanceDriver
+            - Name: BCRYPT_ROUNDS
+              Value: !Ref EnvBcryptRounds
+            - Name: LOG_CHANNEL
+              Value: !Ref EnvLogChannel
+            - Name: LOG_LEVEL
+              Value: !Ref EnvLogLevel
+            - Name: DB_CONNECTION
+              Value: !Ref EnvDbConnection
+            - Name: DB_HOST
+              Value: !Ref EnvDbHost
+            - Name: DB_PORT
+              Value: !Ref EnvDbPort
+            - Name: DB_DATABASE
+              Value: !Ref EnvDbDatabase
+            - Name: SESSION_DRIVER
+              Value: !Ref EnvSessionDriver
+            - Name: SESSION_LIFETIME
+              Value: !Ref EnvSessionLifetime
+            - Name: SESSION_ENCRYPT
+              Value: !Ref EnvSessionEncrypt
+            - Name: BROADCAST_CONNECTION
+              Value: !Ref EnvBroadcastConnection
+            - Name: FILESYSTEM_DISK
+              Value: !Ref EnvFilesystemDisk
+            - Name: QUEUE_CONNECTION
+              Value: !Ref EnvQueueConnection
+            - Name: CACHE_STORE
+              Value: !Ref EnvCacheStore
+            - Name: MEMCACHED_HOST
+              Value: !Ref EnvMemcachedHost
+            - Name: REDIS_CLIENT
+              Value: !Ref EnvRedisClient
+            - Name: REDIS_HOST
+              Value: !Ref EnvRedisHost
+            - Name: REDIS_PORT
+              Value: !Ref EnvRedisPort
+            - Name: MAIL_MAILER
+              Value: !Ref EnvMailMailer
+            - Name: MAIL_HOST
+              Value: !Ref EnvMailHost
+            - Name: MAIL_PORT
+              Value: !Ref EnvMailPort
+            - Name: MAIL_FROM_ADDRESS
+              Value: !Ref EnvMailFromAddress
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref EnvAwsDefaultRegion
+            - Name: AWS_BUCKET
+              Value: !Ref EnvAwsBucket
+            - Name: APP_BUCKET
+              Value: !Ref AppBucket
+          Secrets:
+            - Name: APP_KEY
+              ValueFrom: !Ref SecretAppKey
+            - Name: DB_USERNAME
+              ValueFrom: !Ref SecretDbUsername
+            - Name: DB_PASSWORD
+              ValueFrom: !Ref SecretDbPassword
+            - Name: REDIS_PASSWORD
+              ValueFrom: !Ref SecretRedisPassword
+            - Name: MAIL_USERNAME
+              ValueFrom: !Ref SecretMailUsername
+            - Name: MAIL_PASSWORD
+              ValueFrom: !Ref SecretMailPassword
+            - Name: AWS_ACCESS_KEY_ID
+              ValueFrom: !Ref SecretAwsAccessKeyId
+            - Name: AWS_SECRET_ACCESS_KEY
+              ValueFrom: !Ref SecretAwsSecretAccessKey
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: app
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: HttpListener
+    Properties:
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref PublicSubnetIds
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+      LoadBalancers:
+        - ContainerName: app
+          ContainerPort: 3000
+          TargetGroupArn: !Ref TargetGroup
+
+  AppBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: alb
+            DomainName: !GetAtt LoadBalancer.DNSName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: 80
+        DefaultCacheBehavior:
+          TargetOriginId: alb
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: all
+
+Outputs:
+  AppUrl:
+    Description: App URL (ALB DNS). Add a custom domain via the Website path for HTTPS.
+    Value: !Sub "http://${LoadBalancer.DNSName}"
+  CdnUrl:
+    Description: HTTPS URL served by CloudFront (edge TLS, no custom domain needed).
+    Value: !Sub "https://${Distribution.DomainName}"
