@@ -1,0 +1,590 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Container service (Tudovu). ECS Fargate behind an internet-facing
+  Application Load Balancer (HTTP). Image from ECR. No custom domain — served on
+  the ALB DNS name. Add a domain via the Website path for HTTPS + Route53.
+
+# ── Variables your app reads that Tudovu could not supply ──────────────────────
+# APP_NAME, APP_ENV, APP_DEBUG, APP_URL, APP_LOCALE, APP_FALLBACK_LOCALE, APP_FAKER_LOCALE, APP_MAINTENANCE_DRIVER, BCRYPT_ROUNDS, LOG_CHANNEL, LOG_STACK, LOG_DEPRECATIONS_CHANNEL, LOG_LEVEL, DB_CONNECTION, DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD, SESSION_DRIVER, SESSION_LIFETIME, SESSION_ENCRYPT, SESSION_DOMAIN, BROADCAST_CONNECTION, FILESYSTEM_DISK, QUEUE_CONNECTION, CACHE_STORE, MEMCACHED_HOST, REDIS_CLIENT, REDIS_HOST, REDIS_PASSWORD, REDIS_PORT, MAIL_MAILER, MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, MAIL_FROM_ADDRESS, MAIL_FROM_NAME
+#
+# These are intentionally NOT set on the container. Setting them to an empty string
+# would be worse than leaving them alone: code like os.environ.setdefault(...) or
+# process.env.X ?? default treats an empty value as "already configured" and skips
+# its own default.
+#
+# Plain values: set the matching Env* parameter below.
+# Credentials and connection strings: create a Secrets Manager secret and add it to
+# the task definition's Secrets list — Tudovu will not invent a value, because a
+# random string cannot authenticate to a third party or parse as a connection URL.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to run the service + load balancer in.
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Two or more public subnets for the ALB and Fargate tasks.
+  ImageUri:
+    Type: String
+    Description: ECR image URI the CI/CD workflow pushes.
+  DesiredCount:
+    Type: Number
+    Default: 2
+  EnvAppName:
+    Type: String
+    Default: ""
+    Description: Optional APP_NAME for the app container. Injected only when non-empty.
+  EnvAppEnv:
+    Type: String
+    Default: ""
+    Description: Optional APP_ENV for the app container. Injected only when non-empty.
+  EnvAppDebug:
+    Type: String
+    Default: ""
+    Description: Optional APP_DEBUG for the app container. Injected only when non-empty.
+  EnvAppUrl:
+    Type: String
+    Default: ""
+    Description: Optional APP_URL for the app container. Injected only when non-empty.
+  EnvAppLocale:
+    Type: String
+    Default: ""
+    Description: Optional APP_LOCALE for the app container. Injected only when non-empty.
+  EnvAppFallbackLocale:
+    Type: String
+    Default: ""
+    Description: Optional APP_FALLBACK_LOCALE for the app container. Injected only when non-empty.
+  EnvAppFakerLocale:
+    Type: String
+    Default: ""
+    Description: Optional APP_FAKER_LOCALE for the app container. Injected only when non-empty.
+  EnvAppMaintenanceDriver:
+    Type: String
+    Default: ""
+    Description: Optional APP_MAINTENANCE_DRIVER for the app container. Injected only when non-empty.
+  EnvBcryptRounds:
+    Type: String
+    Default: ""
+    Description: Optional BCRYPT_ROUNDS for the app container. Injected only when non-empty.
+  EnvLogChannel:
+    Type: String
+    Default: ""
+    Description: Optional LOG_CHANNEL for the app container. Injected only when non-empty.
+  EnvLogStack:
+    Type: String
+    Default: ""
+    Description: Optional LOG_STACK for the app container. Injected only when non-empty.
+  EnvLogDeprecationsChannel:
+    Type: String
+    Default: ""
+    Description: Optional LOG_DEPRECATIONS_CHANNEL for the app container. Injected only when non-empty.
+  EnvLogLevel:
+    Type: String
+    Default: ""
+    Description: Optional LOG_LEVEL for the app container. Injected only when non-empty.
+  EnvDbConnection:
+    Type: String
+    Default: ""
+    Description: Optional DB_CONNECTION for the app container. Injected only when non-empty.
+  EnvDbHost:
+    Type: String
+    Default: ""
+    Description: Optional DB_HOST for the app container. Injected only when non-empty.
+  EnvDbPort:
+    Type: String
+    Default: ""
+    Description: Optional DB_PORT for the app container. Injected only when non-empty.
+  EnvDbDatabase:
+    Type: String
+    Default: ""
+    Description: Optional DB_DATABASE for the app container. Injected only when non-empty.
+  EnvSessionDriver:
+    Type: String
+    Default: ""
+    Description: Optional SESSION_DRIVER for the app container. Injected only when non-empty.
+  EnvSessionLifetime:
+    Type: String
+    Default: ""
+    Description: Optional SESSION_LIFETIME for the app container. Injected only when non-empty.
+  EnvSessionEncrypt:
+    Type: String
+    Default: ""
+    Description: Optional SESSION_ENCRYPT for the app container. Injected only when non-empty.
+  EnvSessionDomain:
+    Type: String
+    Default: ""
+    Description: Optional SESSION_DOMAIN for the app container. Injected only when non-empty.
+  EnvBroadcastConnection:
+    Type: String
+    Default: ""
+    Description: Optional BROADCAST_CONNECTION for the app container. Injected only when non-empty.
+  EnvFilesystemDisk:
+    Type: String
+    Default: ""
+    Description: Optional FILESYSTEM_DISK for the app container. Injected only when non-empty.
+  EnvQueueConnection:
+    Type: String
+    Default: ""
+    Description: Optional QUEUE_CONNECTION for the app container. Injected only when non-empty.
+  EnvCacheStore:
+    Type: String
+    Default: ""
+    Description: Optional CACHE_STORE for the app container. Injected only when non-empty.
+  EnvMemcachedHost:
+    Type: String
+    Default: ""
+    Description: Optional MEMCACHED_HOST for the app container. Injected only when non-empty.
+  EnvRedisClient:
+    Type: String
+    Default: ""
+    Description: Optional REDIS_CLIENT for the app container. Injected only when non-empty.
+  EnvRedisHost:
+    Type: String
+    Default: ""
+    Description: Optional REDIS_HOST for the app container. Injected only when non-empty.
+  EnvRedisPort:
+    Type: String
+    Default: ""
+    Description: Optional REDIS_PORT for the app container. Injected only when non-empty.
+  EnvMailMailer:
+    Type: String
+    Default: ""
+    Description: Optional MAIL_MAILER for the app container. Injected only when non-empty.
+  EnvMailHost:
+    Type: String
+    Default: ""
+    Description: Optional MAIL_HOST for the app container. Injected only when non-empty.
+  EnvMailPort:
+    Type: String
+    Default: ""
+    Description: Optional MAIL_PORT for the app container. Injected only when non-empty.
+  EnvMailFromAddress:
+    Type: String
+    Default: ""
+    Description: Optional MAIL_FROM_ADDRESS for the app container. Injected only when non-empty.
+  EnvMailFromName:
+    Type: String
+    Default: ""
+    Description: Optional MAIL_FROM_NAME for the app container. Injected only when non-empty.
+
+Conditions:
+  HasEnvAppName: !Not [!Equals [!Ref EnvAppName, ""]]
+  HasEnvAppEnv: !Not [!Equals [!Ref EnvAppEnv, ""]]
+  HasEnvAppDebug: !Not [!Equals [!Ref EnvAppDebug, ""]]
+  HasEnvAppUrl: !Not [!Equals [!Ref EnvAppUrl, ""]]
+  HasEnvAppLocale: !Not [!Equals [!Ref EnvAppLocale, ""]]
+  HasEnvAppFallbackLocale: !Not [!Equals [!Ref EnvAppFallbackLocale, ""]]
+  HasEnvAppFakerLocale: !Not [!Equals [!Ref EnvAppFakerLocale, ""]]
+  HasEnvAppMaintenanceDriver: !Not [!Equals [!Ref EnvAppMaintenanceDriver, ""]]
+  HasEnvBcryptRounds: !Not [!Equals [!Ref EnvBcryptRounds, ""]]
+  HasEnvLogChannel: !Not [!Equals [!Ref EnvLogChannel, ""]]
+  HasEnvLogStack: !Not [!Equals [!Ref EnvLogStack, ""]]
+  HasEnvLogDeprecationsChannel: !Not [!Equals [!Ref EnvLogDeprecationsChannel, ""]]
+  HasEnvLogLevel: !Not [!Equals [!Ref EnvLogLevel, ""]]
+  HasEnvDbConnection: !Not [!Equals [!Ref EnvDbConnection, ""]]
+  HasEnvDbHost: !Not [!Equals [!Ref EnvDbHost, ""]]
+  HasEnvDbPort: !Not [!Equals [!Ref EnvDbPort, ""]]
+  HasEnvDbDatabase: !Not [!Equals [!Ref EnvDbDatabase, ""]]
+  HasEnvSessionDriver: !Not [!Equals [!Ref EnvSessionDriver, ""]]
+  HasEnvSessionLifetime: !Not [!Equals [!Ref EnvSessionLifetime, ""]]
+  HasEnvSessionEncrypt: !Not [!Equals [!Ref EnvSessionEncrypt, ""]]
+  HasEnvSessionDomain: !Not [!Equals [!Ref EnvSessionDomain, ""]]
+  HasEnvBroadcastConnection: !Not [!Equals [!Ref EnvBroadcastConnection, ""]]
+  HasEnvFilesystemDisk: !Not [!Equals [!Ref EnvFilesystemDisk, ""]]
+  HasEnvQueueConnection: !Not [!Equals [!Ref EnvQueueConnection, ""]]
+  HasEnvCacheStore: !Not [!Equals [!Ref EnvCacheStore, ""]]
+  HasEnvMemcachedHost: !Not [!Equals [!Ref EnvMemcachedHost, ""]]
+  HasEnvRedisClient: !Not [!Equals [!Ref EnvRedisClient, ""]]
+  HasEnvRedisHost: !Not [!Equals [!Ref EnvRedisHost, ""]]
+  HasEnvRedisPort: !Not [!Equals [!Ref EnvRedisPort, ""]]
+  HasEnvMailMailer: !Not [!Equals [!Ref EnvMailMailer, ""]]
+  HasEnvMailHost: !Not [!Equals [!Ref EnvMailHost, ""]]
+  HasEnvMailPort: !Not [!Equals [!Ref EnvMailPort, ""]]
+  HasEnvMailFromAddress: !Not [!Equals [!Ref EnvMailFromAddress, ""]]
+  HasEnvMailFromName: !Not [!Equals [!Ref EnvMailFromName, ""]]
+
+Resources:
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB ingress (HTTP 80) from the internet.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Tasks accept traffic only from the ALB.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Port: 3000
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+      Matcher:
+        HttpCode: 200-399
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}"
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/tudovu/${AWS::StackName}"
+      RetentionInDays: 30
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      PermissionsBoundary: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/TudovuArchitectBoundary'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+      Policies:
+        - PolicyName: read-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref SecretAppKey
+
+  SecretAppKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "APP_KEY for ${AWS::StackName}"
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      PermissionsBoundary: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/TudovuArchitectBoundary'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: app-bucket-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt AppBucket.Arn
+                  - !Sub "${AppBucket.Arn}/*"
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !Ref TaskExecutionRole
+      TaskRoleArn: !Ref TaskRole
+      ContainerDefinitions:
+        - Name: app
+          Image: !Ref ImageUri
+          PortMappings:
+            - ContainerPort: 3000
+          Essential: true
+          Environment:
+            - Name: APP_BUCKET
+              Value: !Ref AppBucket
+            - !If
+              - HasEnvAppName
+              - Name: APP_NAME
+                Value: !Ref EnvAppName
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvAppEnv
+              - Name: APP_ENV
+                Value: !Ref EnvAppEnv
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvAppDebug
+              - Name: APP_DEBUG
+                Value: !Ref EnvAppDebug
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvAppUrl
+              - Name: APP_URL
+                Value: !Ref EnvAppUrl
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvAppLocale
+              - Name: APP_LOCALE
+                Value: !Ref EnvAppLocale
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvAppFallbackLocale
+              - Name: APP_FALLBACK_LOCALE
+                Value: !Ref EnvAppFallbackLocale
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvAppFakerLocale
+              - Name: APP_FAKER_LOCALE
+                Value: !Ref EnvAppFakerLocale
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvAppMaintenanceDriver
+              - Name: APP_MAINTENANCE_DRIVER
+                Value: !Ref EnvAppMaintenanceDriver
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvBcryptRounds
+              - Name: BCRYPT_ROUNDS
+                Value: !Ref EnvBcryptRounds
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvLogChannel
+              - Name: LOG_CHANNEL
+                Value: !Ref EnvLogChannel
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvLogStack
+              - Name: LOG_STACK
+                Value: !Ref EnvLogStack
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvLogDeprecationsChannel
+              - Name: LOG_DEPRECATIONS_CHANNEL
+                Value: !Ref EnvLogDeprecationsChannel
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvLogLevel
+              - Name: LOG_LEVEL
+                Value: !Ref EnvLogLevel
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvDbConnection
+              - Name: DB_CONNECTION
+                Value: !Ref EnvDbConnection
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvDbHost
+              - Name: DB_HOST
+                Value: !Ref EnvDbHost
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvDbPort
+              - Name: DB_PORT
+                Value: !Ref EnvDbPort
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvDbDatabase
+              - Name: DB_DATABASE
+                Value: !Ref EnvDbDatabase
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvSessionDriver
+              - Name: SESSION_DRIVER
+                Value: !Ref EnvSessionDriver
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvSessionLifetime
+              - Name: SESSION_LIFETIME
+                Value: !Ref EnvSessionLifetime
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvSessionEncrypt
+              - Name: SESSION_ENCRYPT
+                Value: !Ref EnvSessionEncrypt
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvSessionDomain
+              - Name: SESSION_DOMAIN
+                Value: !Ref EnvSessionDomain
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvBroadcastConnection
+              - Name: BROADCAST_CONNECTION
+                Value: !Ref EnvBroadcastConnection
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvFilesystemDisk
+              - Name: FILESYSTEM_DISK
+                Value: !Ref EnvFilesystemDisk
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvQueueConnection
+              - Name: QUEUE_CONNECTION
+                Value: !Ref EnvQueueConnection
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvCacheStore
+              - Name: CACHE_STORE
+                Value: !Ref EnvCacheStore
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvMemcachedHost
+              - Name: MEMCACHED_HOST
+                Value: !Ref EnvMemcachedHost
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvRedisClient
+              - Name: REDIS_CLIENT
+                Value: !Ref EnvRedisClient
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvRedisHost
+              - Name: REDIS_HOST
+                Value: !Ref EnvRedisHost
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvRedisPort
+              - Name: REDIS_PORT
+                Value: !Ref EnvRedisPort
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvMailMailer
+              - Name: MAIL_MAILER
+                Value: !Ref EnvMailMailer
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvMailHost
+              - Name: MAIL_HOST
+                Value: !Ref EnvMailHost
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvMailPort
+              - Name: MAIL_PORT
+                Value: !Ref EnvMailPort
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvMailFromAddress
+              - Name: MAIL_FROM_ADDRESS
+                Value: !Ref EnvMailFromAddress
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasEnvMailFromName
+              - Name: MAIL_FROM_NAME
+                Value: !Ref EnvMailFromName
+              - !Ref "AWS::NoValue"
+          Secrets:
+            - Name: APP_KEY
+              ValueFrom: !Ref SecretAppKey
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: app
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: HttpListener
+    Properties:
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref PublicSubnetIds
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+      LoadBalancers:
+        - ContainerName: app
+          ContainerPort: 3000
+          TargetGroupArn: !Ref TargetGroup
+
+  AppBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: alb
+            DomainName: !GetAtt LoadBalancer.DNSName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: 80
+        DefaultCacheBehavior:
+          TargetOriginId: alb
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: all
+
+Outputs:
+  AppUrl:
+    Description: App URL (ALB DNS). Add a custom domain via the Website path for HTTPS.
+    Value: !Sub "http://${LoadBalancer.DNSName}"
+  CdnUrl:
+    Description: HTTPS URL served by CloudFront (edge TLS, no custom domain needed).
+    Value: !Sub "https://${Distribution.DomainName}"
